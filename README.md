@@ -1,4 +1,4 @@
-# Solution for Nintendo HireMe Challenge (0.30ms~ per solution)
+# Solution for Nintendo HireMe Challenge (0.07ms~ per solution)
 
 The solve process was relatively straightforward. 
 
