@@ -55,7 +55,7 @@ u32 diffusion[SIZE] = {
 };
 
 /* --- Bit-packed Matrix-Vector "Multiplication" ---*/
-static inline void matrix_vector_multiply_packed(const uint32_t M_packed[SIZE], const u8 c[SIZE], u8 d[SIZE]) {
+static  void matrix_vector_multiply_packed(const uint32_t M_packed[SIZE], const u8 c[SIZE], u8 d[SIZE]) {
     for (int j = 0; j < SIZE; j++) {
         uint32_t mask = M_packed[j];
         u8 sum = 0;
@@ -69,7 +69,7 @@ static inline void matrix_vector_multiply_packed(const uint32_t M_packed[SIZE], 
 }
 
 /* --- Forward transformation (unchanged) --- */
-void Forward(u8 c[SIZE], u8 d[SIZE], u8 s[512], u32 p[SIZE]) {
+void Forward(u8 c[SIZE], u8 d[SIZE], const u8 s[512], const u32 p[SIZE]) {
     for (u32 i = 0; i < 256; i++) {
         for (u8 j = 0; j < SIZE; j++) {
             d[j] = s[c[j]];
@@ -77,7 +77,7 @@ void Forward(u8 c[SIZE], u8 d[SIZE], u8 s[512], u32 p[SIZE]) {
         }
         for (u8 j = 0; j < SIZE; j++) {
             for (u8 k = 0; k < SIZE; k++) {
-                c[j] ^= d[k] * ((p[j] >> k) & 1);
+                c[j] ^= d[k] * (p[j] >> k & 1);
             }
         }
     }
@@ -173,7 +173,7 @@ typedef struct {
 
 PairList pair_lookup[256];
 
-void push_pair(PairList *list, u8 first, u8 second) {
+void push_pair(PairList *list, const u8 first, const u8 second) {
     if (list->count >= list->capacity) {
         list->capacity *= 2;
         list->pairs = (Pair*)realloc(list->pairs, list->capacity * sizeof(Pair));
@@ -196,7 +196,7 @@ typedef struct {
 
 U8List inv_confusion_full[256];
 
-void push_u8(U8List *list, u8 value) {
+void push_u8(U8List *list, const u8 value) {
     if (list->count >= list->capacity) {
         list->capacity *= 2;
         list->values = (u8*)realloc(list->values, list->capacity * sizeof(u8));
@@ -213,7 +213,7 @@ void push_u8(U8List *list, u8 value) {
 void initialize_inv_confusion_full() {
     for (int i = 0; i < 256; i++) {
         /* Only the first 256 entries of confusion are used */
-        push_u8(&inv_confusion_full[confusion[i]], (u8)i);
+        push_u8(&inv_confusion_full[confusion[i]], i);
     }
 }
 
@@ -222,7 +222,7 @@ void generate_pair_lookup() {
     for (int x = 0; x < 256; x++) {
         for (int y = 0; y < 256; y++) {
             u8 value = confusion[x] ^ confusion[y + 256];
-            push_pair(&pair_lookup[value], (u8)x, (u8)y);
+            push_pair(&pair_lookup[value], x, y);
         }
     }
 }
@@ -234,7 +234,7 @@ uint32_t M_inv_packed[SIZE];
 
 void Backward(u8 c[SIZE], const uint8_t M_inv[SIZE][SIZE], int round);
 
-void BackwardConf(const u8 d[SIZE], u8 c[SIZE], const uint8_t M_inv[SIZE][SIZE], int round, int inner_round) {
+void BackwardConf(const u8 d[SIZE], u8 c[SIZE], const uint8_t M_inv[SIZE][SIZE], const int round, const int inner_round) {
     if (inner_round == SIZE) {
         u8 candidate[SIZE];
         memcpy(candidate, c, SIZE);
@@ -250,7 +250,7 @@ void BackwardConf(const u8 d[SIZE], u8 c[SIZE], const uint8_t M_inv[SIZE][SIZE],
     c[inner_round] = original; // Backtrack
 }
 
-void Backward(u8 c[SIZE], const uint8_t M_inv[SIZE][SIZE], int round) {
+void Backward(u8 c[SIZE], const uint8_t M_inv[SIZE][SIZE], const int round) {
     if (round != 256) {
         u8 d[SIZE] = {0};
         /* Use the optimized bit-packed multiplication */
@@ -262,7 +262,7 @@ void Backward(u8 c[SIZE], const uint8_t M_inv[SIZE][SIZE], int round) {
 }
 
 /* Rebuilds the initial 32-byte state from the 16-byte encrypted output */
-void init_backward(const u8 input[ENCRYPTED_SIZE], const uint8_t M_inv[SIZE][SIZE], u8 trial_d_u8[SIZE], int depth) {
+void init_backward(const u8 input[ENCRYPTED_SIZE], const uint8_t M_inv[SIZE][SIZE], u8 trial_d_u8[SIZE], const int depth) {
     u8 trial_d[SIZE];
     memcpy(trial_d, trial_d_u8, SIZE);
     if (depth < ENCRYPTED_SIZE) {

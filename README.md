@@ -21,4 +21,4 @@ The solve process was relatively straightforward.
 6. **Handling S Compatibility**:  
    Another key aspect was recognizing that `S` cannot produce all possible values. Therefore, we need to handle cases where we choose a value incompatible with `S`.
 7. **Perfomance Improvement**:  
-   matrix vector multiplication did take a lot of time, I improved this by packing every row of the matrix into a u32 and leveregin count trailing zero instruction (from 0.3ms to 0.07)
+   matrix vector multiplication did take a lot of time, I improved this by packing every row of the matrix into an u32 and exploiting count trailing zero instruction (from 0.3ms to 0.07)
