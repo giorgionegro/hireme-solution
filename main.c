@@ -1,5 +1,3 @@
-
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -56,18 +54,21 @@ u32 diffusion[SIZE] = {
     0x81b46cf2, 0x92dca516, 0x24a95b3c, 0x4852b679, 0x184bc62f, 0x29cd5a61, 0x429ab5c3, 0x84256b97
 };
 
-/* --- Matrix-vector multiplication in GF(2) --- */
-void matrix_vector_multiply(uint8_t const M[SIZE][SIZE], uint8_t const v[SIZE], uint8_t result[SIZE]) {
+/* --- Bit-packed Matrix-Vector "Multiplication" ---*/
+static inline void matrix_vector_multiply_packed(const uint32_t M_packed[SIZE], const u8 c[SIZE], u8 d[SIZE]) {
     for (int j = 0; j < SIZE; j++) {
-        result[j] = 0;
-        for (int k = 0; k < SIZE; k++) {
-            if (M[j][k])
-                result[j] ^= v[k];
+        uint32_t mask = M_packed[j];
+        u8 sum = 0;
+        while (mask) {
+            int k = __builtin_ctz(mask);  // index of the lowest set bit
+            sum ^= c[k];
+            mask &= mask - 1;  // clear the lowest set bit
         }
+        d[j] = sum;
     }
 }
 
-/* --- Forward transformation --- */
+/* --- Forward transformation (unchanged) --- */
 void Forward(u8 c[SIZE], u8 d[SIZE], u8 s[512], u32 p[SIZE]) {
     for (u32 i = 0; i < 256; i++) {
         for (u8 j = 0; j < SIZE; j++) {
@@ -88,7 +89,7 @@ void Forward(u8 c[SIZE], u8 d[SIZE], u8 s[512], u32 p[SIZE]) {
 void construct_matrix(uint8_t M[SIZE][SIZE]) {
     for (int j = 0; j < SIZE; j++) {
         for (int k = 0; k < SIZE; k++) {
-            M[j][k] = diffusion[j] >> k & 1;
+            M[j][k] = (diffusion[j] >> k) & 1;
         }
     }
 }
@@ -100,7 +101,7 @@ int invert_matrix(uint8_t M[SIZE][SIZE], uint8_t M_inv[SIZE][SIZE]) {
     for (i = 0; i < SIZE; i++) {
         for (j = 0; j < SIZE; j++) {
             augmented[i][j] = M[i][j];
-            augmented[i][j + SIZE] = i == j ? 1 : 0;
+            augmented[i][j + SIZE] = (i == j) ? 1 : 0;
         }
     }
     for (i = 0; i < SIZE; i++) {
@@ -111,7 +112,7 @@ int invert_matrix(uint8_t M[SIZE][SIZE], uint8_t M_inv[SIZE][SIZE]) {
             if (swap_row == SIZE)
                 return 0; // Matrix is singular
             for (j = 0; j < SIZE * 2; j++) {
-                const u8 temp = augmented[i][j];
+                u8 temp = augmented[i][j];
                 augmented[i][j] = augmented[swap_row][j];
                 augmented[swap_row][j] = temp;
             }
@@ -133,8 +134,6 @@ int invert_matrix(uint8_t M[SIZE][SIZE], uint8_t M_inv[SIZE][SIZE]) {
 }
 
 /* --- Dynamic array structures and helper functions --- */
-
-/* Output container for full 32-byte candidate solutions */
 typedef struct {
     u8 data[SIZE];
 } Output;
@@ -147,7 +146,6 @@ typedef struct {
 
 OutputList outputs;
 
-/* Append candidate output; reallocates if needed */
 void push_output(OutputList *list, const u8 candidate[SIZE]) {
     if (list->count >= list->capacity) {
         list->capacity *= 2;
@@ -175,8 +173,7 @@ typedef struct {
 
 PairList pair_lookup[256];
 
-/* Append a (x,y) pair to a bucket */
-void push_pair( PairList *list, u8 const first, u8 const second) {
+void push_pair(PairList *list, u8 first, u8 second) {
     if (list->count >= list->capacity) {
         list->capacity *= 2;
         list->pairs = (Pair*)realloc(list->pairs, list->capacity * sizeof(Pair));
@@ -199,8 +196,7 @@ typedef struct {
 
 U8List inv_confusion_full[256];
 
-/* Append an u8 value to the list */
-void push_u8(U8List *list, u8 const value) {
+void push_u8(U8List *list, u8 value) {
     if (list->count >= list->capacity) {
         list->capacity *= 2;
         list->values = (u8*)realloc(list->values, list->capacity * sizeof(u8));
@@ -217,7 +213,7 @@ void push_u8(U8List *list, u8 const value) {
 void initialize_inv_confusion_full() {
     for (int i = 0; i < 256; i++) {
         /* Only the first 256 entries of confusion are used */
-        push_u8(&inv_confusion_full[ confusion[i] ], (u8)i);
+        push_u8(&inv_confusion_full[confusion[i]], (u8)i);
     }
 }
 
@@ -225,35 +221,40 @@ void initialize_inv_confusion_full() {
 void generate_pair_lookup() {
     for (int x = 0; x < 256; x++) {
         for (int y = 0; y < 256; y++) {
-            const u8 value = confusion[x] ^ confusion[y + 256];
+            u8 value = confusion[x] ^ confusion[y + 256];
             push_pair(&pair_lookup[value], (u8)x, (u8)y);
         }
     }
 }
 
 /* --- Recursive functions for decryption --- */
-void Backward(u8 c[SIZE], u8 const M_inv[SIZE][SIZE], int round);
 
-void BackwardConf(const u8 d[SIZE], u8 c[SIZE], u8 const M_inv[SIZE][SIZE], int const round, int const inner_round) {
+/* Global variable for the bit-packed inverse matrix */
+uint32_t M_inv_packed[SIZE];
+
+void Backward(u8 c[SIZE], const uint8_t M_inv[SIZE][SIZE], int round);
+
+void BackwardConf(const u8 d[SIZE], u8 c[SIZE], const uint8_t M_inv[SIZE][SIZE], int round, int inner_round) {
     if (inner_round == SIZE) {
         u8 candidate[SIZE];
         memcpy(candidate, c, SIZE);
         Backward(candidate, M_inv, round);
         return;
     }
-    const u8 original = c[inner_round];
+    u8 original = c[inner_round];
     for (int i = 0; i < inv_confusion_full[d[inner_round]].count; i++) {
-        const u8 inversion = inv_confusion_full[d[inner_round]].values[i];
+        u8 inversion = inv_confusion_full[d[inner_round]].values[i];
         c[inner_round] = inversion;
         BackwardConf(d, c, M_inv, round, inner_round + 1);
     }
     c[inner_round] = original; // Backtrack
 }
 
-void Backward(u8 c[SIZE], u8 const M_inv[SIZE][SIZE], int const round) {
-    if (round != 256){
+void Backward(u8 c[SIZE], const uint8_t M_inv[SIZE][SIZE], int round) {
+    if (round != 256) {
         u8 d[SIZE] = {0};
-        matrix_vector_multiply(M_inv, c, d);
+        /* Use the optimized bit-packed multiplication */
+        matrix_vector_multiply_packed(M_inv_packed, c, d);
         BackwardConf(d, c, M_inv, round + 1, 0);
         return;
     }
@@ -261,7 +262,7 @@ void Backward(u8 c[SIZE], u8 const M_inv[SIZE][SIZE], int const round) {
 }
 
 /* Rebuilds the initial 32-byte state from the 16-byte encrypted output */
-void init_backward(const u8 input[ENCRYPTED_SIZE], u8 const M_inv[SIZE][SIZE], u8 trial_d_u8[SIZE], int const depth) {
+void init_backward(const u8 input[ENCRYPTED_SIZE], const uint8_t M_inv[SIZE][SIZE], u8 trial_d_u8[SIZE], int depth) {
     u8 trial_d[SIZE];
     memcpy(trial_d, trial_d_u8, SIZE);
     if (depth < ENCRYPTED_SIZE) {
@@ -270,15 +271,13 @@ void init_backward(const u8 input[ENCRYPTED_SIZE], u8 const M_inv[SIZE][SIZE], u
             trial_d[depth * 2 + 1] = pair_lookup[input[depth]].pairs[i].second;
             init_backward(input, M_inv, trial_d, depth + 1);
             if (outputs.count > MAX_OUTPUTS) {
-                printf("Found %d solutions, stopping search.\n",MAX_OUTPUTS);
+                printf("Found %d solutions, stopping search.\n", MAX_OUTPUTS);
                 return;
             }
         }
         return;
     }
-    /* When the entire trial_d is built (32 bytes), start the backward decryption */
-    u8 candidate[SIZE];
-    u8 d[SIZE];
+    u8 candidate[SIZE], d[SIZE];
     memcpy(d, trial_d, SIZE);
     memcpy(candidate, d, SIZE);
     Backward(candidate, M_inv, 0);
@@ -287,12 +286,23 @@ void init_backward(const u8 input[ENCRYPTED_SIZE], u8 const M_inv[SIZE][SIZE], u
 /* --- Global target (encrypted output) --- */
 u8 target[ENCRYPTED_SIZE] = "Hire me!!!!!!!!";
 
+/* ---pack 32x32 matrix --- */
+void pack_matrix(const uint8_t M[SIZE][SIZE], uint32_t M_packed[SIZE]) {
+    for (int j = 0; j < SIZE; j++) {
+        M_packed[j] = 0;
+        for (int k = 0; k < SIZE; k++) {
+            if (M[j][k])
+                M_packed[j] |= (1U << k);
+        }
+    }
+}
+
 int main() {
     u8 trial_d[SIZE] = {0};
 
     /* Initialize outputs dynamic array */
     outputs.count = 0;
-    outputs.capacity = MAX_OUTPUTS*2;
+    outputs.capacity = MAX_OUTPUTS * 2;
     outputs.outputs = (Output*)malloc(outputs.capacity * sizeof(Output));
     if (!outputs.outputs) {
         fprintf(stderr, "Memory allocation error\n");
@@ -326,15 +336,18 @@ int main() {
     generate_pair_lookup();
 
     /* Construct and invert the diffusion matrix */
-    u8 M[SIZE][SIZE] = {0};
-    u8 M_inv[SIZE][SIZE] = {0};
+    uint8_t M[SIZE][SIZE] = {0};
+    uint8_t M_inv[SIZE][SIZE] = {0};
     construct_matrix(M);
     if (!invert_matrix(M, M_inv)) {
         fprintf(stderr, "Error: Matrix is not invertible\n");
         return 1;
     }
 
-    /* Test the matrix inversion with an arbitrary input */
+    /* Pack the inverse matrix into bit-packed representation */
+    pack_matrix(M_inv, M_inv_packed);
+
+    /* Test the matrix inversion using the bit-packed multiplication */
     u8 test_input[SIZE] = {
         0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
         0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
@@ -342,9 +355,11 @@ int main() {
         0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20
     };
     u8 output_test[SIZE] = {0};
-    matrix_vector_multiply(M_inv, test_input, output_test);
     u8 o2[SIZE] = {0};
-    matrix_vector_multiply(M, output_test, o2);
+    uint32_t M_packed[SIZE];
+    pack_matrix(M, M_packed);
+    matrix_vector_multiply_packed(M_inv_packed, test_input, output_test);
+    matrix_vector_multiply_packed(M_packed, output_test, o2);
     if (memcmp(test_input, o2, SIZE) == 0)
         printf("Matrix inversion test passed!\n");
     else
@@ -355,16 +370,14 @@ int main() {
     const clock_t end_time = clock();
 
     printf("\nTotal solutions found: %d\n", outputs.count);
-    const double time_taken = ((double)(end_time - start_time)) / CLOCKS_PER_SEC * 1000.0;
+    double time_taken = ((double)(end_time - start_time)) / CLOCKS_PER_SEC * 1000.0;
     printf("Time taken: %.0f ms\n", time_taken);
     if (outputs.count > 0)
         printf("Time per solution: %.6f ms\n", time_taken / outputs.count);
 
-    /* Validate each output candidate by running the forward transformation.
-       Also check for duplicate outputs using a simple nested loop. */
+    /* Validate each output candidate by running the forward transformation. Sanity check */
     for (int i = 0; i < outputs.count; i++) {
-        u8 c[SIZE];
-        u8 d[SIZE];
+        u8 c[SIZE], d[SIZE];
         memcpy(c, outputs.outputs[i].data, SIZE);
         Forward(c, d, confusion, diffusion);
         if (memcmp(d, target, ENCRYPTED_SIZE) != 0) {
