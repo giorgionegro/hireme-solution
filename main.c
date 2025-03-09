@@ -60,7 +60,7 @@ static  void matrix_vector_multiply_packed(const uint32_t M_packed[SIZE], const 
         uint32_t mask = M_packed[j];
         u8 sum = 0;
         while (mask) {
-            int k = __builtin_ctz(mask);  // index of the lowest set bit
+            const int k = __builtin_ctz(mask);  // index of the lowest set bit
             sum ^= c[k];
             mask &= mask - 1;  // clear the lowest set bit
         }
@@ -112,7 +112,7 @@ int invert_matrix(uint8_t M[SIZE][SIZE], uint8_t M_inv[SIZE][SIZE]) {
             if (swap_row == SIZE)
                 return 0; // Matrix is singular
             for (j = 0; j < SIZE * 2; j++) {
-                u8 temp = augmented[i][j];
+                const u8 temp = augmented[i][j];
                 augmented[i][j] = augmented[swap_row][j];
                 augmented[swap_row][j] = temp;
             }
@@ -221,7 +221,7 @@ void initialize_inv_confusion_full() {
 void generate_pair_lookup() {
     for (int x = 0; x < 256; x++) {
         for (int y = 0; y < 256; y++) {
-            u8 value = confusion[x] ^ confusion[y + 256];
+            const u8 value = confusion[x] ^ confusion[y + 256];
             push_pair(&pair_lookup[value], x, y);
         }
     }
@@ -241,9 +241,9 @@ void BackwardConf(const u8 d[SIZE], u8 c[SIZE], const uint8_t M_inv[SIZE][SIZE],
         Backward(candidate, M_inv, round);
         return;
     }
-    u8 original = c[inner_round];
+    const u8 original = c[inner_round];
     for (int i = 0; i < inv_confusion_full[d[inner_round]].count; i++) {
-        u8 inversion = inv_confusion_full[d[inner_round]].values[i];
+        const u8 inversion = inv_confusion_full[d[inner_round]].values[i];
         c[inner_round] = inversion;
         BackwardConf(d, c, M_inv, round, inner_round + 1);
     }
@@ -348,7 +348,7 @@ int main() {
     pack_matrix(M_inv, M_inv_packed);
 
     /* Test the matrix inversion using the bit-packed multiplication */
-    u8 test_input[SIZE] = {
+    const u8 test_input[SIZE] = {
         0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
         0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
         0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
@@ -370,7 +370,7 @@ int main() {
     const clock_t end_time = clock();
 
     printf("\nTotal solutions found: %d\n", outputs.count);
-    double time_taken = ((double)(end_time - start_time)) / CLOCKS_PER_SEC * 1000.0;
+    const double time_taken = ((double)(end_time - start_time)) / CLOCKS_PER_SEC * 1000.0;
     printf("Time taken: %.0f ms\n", time_taken);
     if (outputs.count > 0)
         printf("Time per solution: %.6f ms\n", time_taken / outputs.count);
